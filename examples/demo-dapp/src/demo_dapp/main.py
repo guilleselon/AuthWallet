@@ -14,7 +14,7 @@ from fasthtml.common import (
 
 AUTH_URL = os.environ.get("AUTH_URL", "http://localhost:8080")
 
-app, rt = fast_app()
+app, rt = fast_app(secret_key="demo-dapp-session-key-not-used-because-we-use-auth-service")
 
 
 PAGE_JS = f"""
