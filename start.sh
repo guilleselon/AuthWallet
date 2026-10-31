@@ -3,7 +3,7 @@ set -e
 
 # Arranca el Auth-Service en el puerto 8080 (segundo plano)
 echo "Starting Auth-Service..."
-cd /app/services/auth-service
+cd /app/auth-service
 uvicorn src.auth_service.main:app --host 0.0.0.0 --port 8080 &
 AUTH_PID=$!
 
