@@ -100,7 +100,7 @@ def create_app(
             max_age=initial_ttl,
             httponly=True,
             secure=cookie_secure,
-            samesite="lax",
+            samesite="none",
             path="/",
         )
         return SessionResponse(
