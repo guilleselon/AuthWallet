@@ -4,7 +4,7 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # Copiamos e instalamos dependencias del Auth-Service
-COPY services/auth-service/requirements.txt ./auth-req.txt
+COPY auth-service/requirements.txt ./auth-req.txt
 RUN pip install --no-cache-dir -r auth-req.txt
 
 # Copiamos e instalamos dependencias de la DApp
