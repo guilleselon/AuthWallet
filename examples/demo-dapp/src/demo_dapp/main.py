@@ -1,8 +1,13 @@
-"""DApp de demo para probar SIWE con auth-service."""
+"""DApp de demo para probar SIWE con auth-service.
+
+Incluye un proxy interno para redirigir las peticiones /auth/* al
+auth-service (puerto 8080) y que todo funcione bajo un solo dominio.
+"""
 from __future__ import annotations
 
 import os
 
+import httpx
 from fasthtml.common import (
     Button,
     Div,
@@ -11,8 +16,12 @@ from fasthtml.common import (
     Titled,
     fast_app,
 )
+from starlette.requests import Request
+from starlette.responses import Response
 
-AUTH_URL = os.environ.get("AUTH_URL", "http://localhost:8080")
+# En producción (Orkestr), AUTH_URL debe estar vacío para usar rutas relativas.
+# En local, si no se define, también usamos rutas relativas y el proxy.
+AUTH_URL = os.environ.get("AUTH_URL", "")
 
 app, rt = fast_app()
 
@@ -111,7 +120,7 @@ async function logout() {{
     }}
 }}
 
-// ─── Mostrar botones (sin DOMContentLoaded) ──────────────────
+// ─── Mostrar botones ─────────────────────────────────────────
 if (hasInjectedWallet) {{
     document.getElementById('wallet-actions').style.display = 'block';
     document.getElementById('deep-links').style.display = 'none';
@@ -125,13 +134,41 @@ if (hasInjectedWallet) {{
 """
 
 
+# ─── Proxy para el Auth-Service ──────────────────────────────
+@rt("/auth/{path:path}", methods=["GET", "POST", "OPTIONS"])
+async def proxy_auth(request: Request, path: str):
+    """Redirige las peticiones /auth/* al auth-service en localhost:8080."""
+    async with httpx.AsyncClient() as client:
+        url = f"http://localhost:8080/auth/{path}"
+        headers = dict(request.headers)
+        headers.pop("host", None)  # Evitar conflictos de host
+        body = await request.body()
+
+        resp = await client.request(
+            method=request.method,
+            url=url,
+            headers=headers,
+            content=body,
+        )
+        # Reenviar la respuesta (incluyendo la cookie de sesión)
+        response_headers = {
+            k: v for k, v in resp.headers.items()
+            if k.lower() not in ("content-length", "transfer-encoding")
+        }
+        return Response(
+            content=resp.content,
+            status_code=resp.status_code,
+            headers=response_headers,
+        )
+
+
 @rt("/")
 def get():
     return Titled(
         "Demo DApp — SIWE",
         P("Autenticación con Sign-In with Ethereum (EIP-4361)."),
 
-        # Botones de Login (ocultos por defecto, se muestran si hay wallet)
+        # Botones de Login
         Div(
             Button("Login con wallet", onclick="login()"),
             Button("¿Quién soy?", onclick="whoami()", style="margin-left:8px;"),
@@ -140,7 +177,7 @@ def get():
             style="display:none; margin-top:16px;",
         ),
 
-        # Botones de Deep Link (visibles por defecto, se ocultan si hay wallet)
+        # Botones de Deep Link
         Div(
             P("Abre esta DApp en el navegador de tu wallet:"),
             Button("Abrir en MetaMask", onclick="openInMetaMask()"),
