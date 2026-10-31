@@ -90,13 +90,6 @@ def configure_logging(level: str) -> None:
 
 def main() -> None:
     import uvicorn
-    config = load_config()
-    configure_logging(config.log_level)
-    app = build_app(config)
-    logger.info(
-        "starting auth-service on %s:%s (domain=%s chain=%s store=%s)",
-        config.host, config.port, config.domain,
-        config.chain_id, config.store_backend,
-    )
-    uvicorn.run(app, host=config.host, port=config.port,
-                log_level=config.log_level.lower())
+    uvicorn.run("auth_service.main:app", host="0.0.0.0", port=8000, reload=False)
+
+app = build_app(load_config())
