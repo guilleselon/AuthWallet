@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 
 from fasthtml.common import (
+    A,           # Importante para los enlaces del dropdown
     Button,
     Div,
     P,
@@ -13,25 +14,23 @@ from fasthtml.common import (
 )
 
 AUTH_URL = os.environ.get("AUTH_URL", "http://localhost:8080")
-
-# Forzamos secret_key para evitar el error de sistema de archivos de solo lectura en Docker
 app, rt = fast_app(secret_key="demo-dapp-key-not-used")
 
 PAGE_JS = f"""
 const AUTH_URL = {AUTH_URL!r};
 
-const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-const hasInjectedWallet = typeof window.ethereum !== 'undefined';
-
-// ─── Login ───────────────────────────────────────────────────
+// ─── Login Principal ─────────────────────────────────────────
 async function login() {{
     const status = document.getElementById('status');
-    try {{
-        if (!window.ethereum) {{
-            status.textContent = 'No hay wallet inyectada.';
-            return;
-        }}
+    
+    // Verificamos la wallet EN EL MOMENTO DEL CLIC
+    if (typeof window.ethereum === 'undefined') {{
+        status.innerHTML = '<span style="color:red;"><b>⚠️ No estás dentro de una wallet.</b></span><br>' +
+                           'Si estás en Chrome/Safari, por favor usa el menú <b>"Elegir Wallet ▼"</b> para abrir esta DApp dentro de tu wallet móvil.';
+        return;
+    }}
 
+    try {{
         status.textContent = 'Conectando wallet...';
         const accounts = await window.ethereum.request({{ method: 'eth_requestAccounts' }});
         const address = accounts[0];
@@ -60,12 +59,10 @@ async function login() {{
         if (!verifyResp.ok) throw new Error(`verify ${{verifyResp.status}}: ${{await verifyResp.text()}}`);
         
         const session = await verifyResp.json();
-        
-        // Guardamos el token en localStorage
         localStorage.setItem('auth_token', session.token);
 
         status.innerHTML =
-            '<b>✅ Login correcto</b><br>' +
+            '<b style="color:green;">✅ Login correcto</b><br>' +
             'Address: <code>' + session.address + '</code><br>' +
             'Chain ID: ' + session.chain_id + '<br>' +
             'Expira: ' + new Date(session.expires_at * 1000).toLocaleString();
@@ -74,19 +71,32 @@ async function login() {{
     }}
 }}
 
-// ─── Deep links ──────────────────────────────────────────────
-function openInMetaMask() {{
-    // Formato correcto para evitar pantalla en blanco en Android
+// ─── Menú Desplegable de Wallets ─────────────────────────────
+function openWalletMenu() {{
+    document.getElementById('wallet-dropdown').classList.toggle('show');
+}}
+
+// Cerrar el menú si se hace clic fuera
+window.onclick = function(event) {{
+    if (!event.target.matches('.dropbtn')) {{
+        const dropdowns = document.getElementsByClassName("dropdown-content");
+        for (let i = 0; i < dropdowns.length; i++) {{
+            if (dropdowns[i].classList.contains('show')) {{
+                dropdowns[i].classList.remove('show');
+            }}
+        }}
+    }}
+}}
+
+function redirectToWallet(wallet) {{
     const currentUrl = window.location.host + window.location.pathname;
-    window.location.href = 'https://metamask.app.link/dapp/' + currentUrl;
-}}
-
-function openInTrust() {{
-    window.location.href = 'https://link.trustwallet.com/open_url?coin_id=60&url=' + encodeURIComponent(window.location.href);
-}}
-
-function openInCoinbase() {{
-    window.location.href = 'https://go.cb-w.com/dapp?cb_url=' + encodeURIComponent(window.location.href);
+    if (wallet === 'metamask') {{
+        window.location.href = 'https://metamask.app.link/dapp/' + currentUrl;
+    }} else if (wallet === 'trust') {{
+        window.location.href = 'https://link.trustwallet.com/open_url?coin_id=60&url=' + encodeURIComponent(window.location.href);
+    }} else if (wallet === 'coinbase') {{
+        window.location.href = 'https://go.cb-w.com/dapp?cb_url=' + encodeURIComponent(window.location.href);
+    }}
 }}
 
 // ─── Whoami / Logout ─────────────────────────────────────────
@@ -96,14 +106,11 @@ async function whoami() {{
         const token = localStorage.getItem('auth_token');
         const headers = token ? {{ 'Authorization': `Bearer ${{token}}` }} : {{}};
         
-        const r = await fetch(`${{AUTH_URL}}/auth/me`, {{ 
-            credentials: 'include',
-            headers: headers 
-        }});
+        const r = await fetch(`${{AUTH_URL}}/auth/me`, {{ credentials: 'include', headers: headers }});
         
         if (r.status === 401) {{
             status.textContent = 'No hay sesión activa.';
-            localStorage.removeItem('auth_token'); // Limpiamos token inválido
+            localStorage.removeItem('auth_token');
             return;
         }}
         if (!r.ok) throw new Error(`me ${{r.status}}: ${{await r.text()}}`);
@@ -123,67 +130,55 @@ async function logout() {{
     try {{
         const token = localStorage.getItem('auth_token');
         const headers = token ? {{ 'Authorization': `Bearer ${{token}}` }} : {{}};
-
-        await fetch(`${{AUTH_URL}}/auth/logout`, {{
-            method: 'POST', 
-            credentials: 'include',
-            headers: headers
-        }});
-        
+        await fetch(`${{AUTH_URL}}/auth/logout`, {{ method: 'POST', credentials: 'include', headers: headers }});
         localStorage.removeItem('auth_token');
         status.textContent = 'Sesión cerrada.';
     }} catch (err) {{
         status.textContent = 'Error: ' + (err.message || err);
     }}
 }}
-
-// ─── Mostrar botones ─────────────────────────────────────────
-if (hasInjectedWallet) {{
-    document.getElementById('wallet-actions').style.display = 'block';
-    document.getElementById('deep-links').style.display = 'none';
-}} else {{
-    document.getElementById('wallet-actions').style.display = 'none';
-    document.getElementById('deep-links').style.display = 'block';
-    if (!isMobile) {{
-        document.getElementById('desktop-hint').style.display = 'block';
-    }}
-}}
 """
 
+STYLES = """
+<style>
+.dropdown { position: relative; display: inline-block; margin-left: 8px; }
+.dropbtn { background-color: #e0e0e0; color: black; padding: 8px 16px; font-size: 14px; border: 1px solid #999; cursor: pointer; border-radius: 4px; font-weight: bold;}
+.dropdown-content { display: none; position: absolute; background-color: #f9f9f9; min-width: 180px; box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.2); z-index: 1; right: 0; border-radius: 4px; overflow: hidden;}
+.dropdown-content a { color: black; padding: 12px 16px; text-decoration: none; display: block; cursor: pointer; font-family: sans-serif;}
+.dropdown-content a:hover { background-color: #ddd; }
+.show { display: block; }
+</style>
+"""
 
 @rt("/")
 def get():
     return Titled(
         "Demo DApp — SIWE",
+        Script(STYLES),
         P("Autenticación con Sign-In with Ethereum (EIP-4361)."),
 
         Div(
             Button("Login con wallet", onclick="login()"),
             Button("¿Quién soy?", onclick="whoami()", style="margin-left:8px;"),
             Button("Logout", onclick="logout()", style="margin-left:8px;"),
-            id="wallet-actions",
-            style="display:none; margin-top:16px;",
-        ),
-
-        Div(
-            P("Abre esta DApp en el navegador de tu wallet:"),
-            Button("Abrir en MetaMask", onclick="openInMetaMask()"),
-            Button("Abrir en Trust", onclick="openInTrust()", style="margin-left:8px;"),
-            Button("Abrir en Coinbase", onclick="openInCoinbase()", style="margin-left:8px;"),
-            id="deep-links",
-            style="display:block; margin-top:16px;",
-        ),
-
-        P(
-            "Si estás en escritorio, instala MetaMask o abre esta URL en tu móvil.",
-            id="desktop-hint",
-            style="display:none; color:#a00; margin-top:12px;",
+            
+            # Menú Desplegable
+            Div(
+                Button("Elegir Wallet ▼", onclick="openWalletMenu()", cls="dropbtn"),
+                Div(
+                    A("Abrir en MetaMask", onclick="redirectToWallet('metamask')"),
+                    A("Abrir en Trust Wallet", onclick="redirectToWallet('trust')"),
+                    A("Abrir en Coinbase", onclick="redirectToWallet('coinbase')"),
+                    id="wallet-dropdown", cls="dropdown-content"
+                ),
+                cls="dropdown"
+            ),
+            style="margin-top:16px;",
         ),
 
         P(id="status", style="font-family:monospace; margin-top:24px; white-space:pre-line;"),
         Script(PAGE_JS),
     )
-
 
 if __name__ == "__main__":
     import uvicorn
