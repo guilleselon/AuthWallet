@@ -24,10 +24,9 @@ from .schemas import (
 
 _DEFAULT_COOKIE_NAME = "auth_session"
 
-
 def _get_session_id(request: Request, cookie_name: str, serializer: URLSafeSerializer) -> SessionId:
     """Extrae el ID de sesión desde el Header Bearer o desde la Cookie."""
-    # 1. Intentar por Header (Trust Wallet, dapps móviles)
+    # 1. Intentar por Header (Trust Wallet, dapps móviles, JWT)
     auth_header = request.headers.get("Authorization", "")
     if auth_header.startswith("Bearer "):
         token = auth_header[len("Bearer "):]
@@ -39,7 +38,6 @@ def _get_session_id(request: Request, cookie_name: str, serializer: URLSafeSeria
         return decode_session_cookie(serializer, cookie)
     
     raise SessionNotFound("no session provided")
-
 
 def create_app(
     *,
@@ -58,8 +56,8 @@ def create_app(
             CORSMiddleware,
             allow_origins=list(cors_origins),
             allow_credentials=True,
-            allow_methods=["GET", "POST"],
-            allow_headers=["Content-Type", "Authorization"], # Permitir cabecera Authorization
+            allow_methods=["*"],  # Permite OPTIONS, GET, POST sin demoras
+            allow_headers=["*"],  # Permite Authorization, Content-Type, etc.
         )
 
     @app.exception_handler(AuthError)
@@ -89,11 +87,8 @@ def create_app(
             message=body.message, signature=body.signature
         )
         initial_ttl = int(session.expires_at - session.created_at)
-        
-        # Generamos el token firmado
         token = encode_session_cookie(cookie_serializer, session.id)
 
-        # Seteamos la cookie para navegadores que la soporten
         response.set_cookie(
             key=cookie_name,
             value=token,
@@ -104,7 +99,6 @@ def create_app(
             path="/",
         )
         
-        # Devolvemos el token en el JSON
         return SessionResponse(
             address=session.address,
             chain_id=session.chain_id,
@@ -120,7 +114,7 @@ def create_app(
             address=session.address,
             chain_id=session.chain_id,
             expires_at=session.expires_at,
-            token=encode_session_cookie(cookie_serializer, session.id), # Devolvemos el token por consistencia
+            token=encode_session_cookie(cookie_serializer, session.id),
         )
 
     @app.post("/auth/logout", response_model=StatusResponse)
@@ -129,7 +123,7 @@ def create_app(
             session_id = _get_session_id(request, cookie_name, cookie_serializer)
             await manage_session.logout(session_id)
         except SessionNotFound:
-            pass # Idempotente
+            pass
             
         response.delete_cookie(key=cookie_name, path="/")
         return StatusResponse(status="logged_out")
