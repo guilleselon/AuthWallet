@@ -14,8 +14,8 @@ from fasthtml.common import (
 
 AUTH_URL = os.environ.get("AUTH_URL", "http://localhost:8080")
 
-app, rt = fast_app(secret_key="demo-dapp-session-key-not-used-because-we-use-auth-service")
-
+# Forzamos secret_key para evitar el error de sistema de archivos de solo lectura en Docker
+app, rt = fast_app(secret_key="demo-dapp-key-not-used")
 
 PAGE_JS = f"""
 const AUTH_URL = {AUTH_URL!r};
@@ -32,7 +32,7 @@ async function login() {{
             return;
         }}
 
-        status.textContent = 'Conectando MetaMask...';
+        status.textContent = 'Conectando wallet...';
         const accounts = await window.ethereum.request({{ method: 'eth_requestAccounts' }});
         const address = accounts[0];
 
@@ -40,7 +40,6 @@ async function login() {{
         const nonceResp = await fetch(`${{AUTH_URL}}/auth/nonce`, {{
             method: 'POST',
             headers: {{ 'Content-Type': 'application/json' }},
-            credentials: 'include',
             body: JSON.stringify({{ address }}),
         }});
         if (!nonceResp.ok) throw new Error(`nonce ${{nonceResp.status}}: ${{await nonceResp.text()}}`);
@@ -56,11 +55,14 @@ async function login() {{
         const verifyResp = await fetch(`${{AUTH_URL}}/auth/verify`, {{
             method: 'POST',
             headers: {{ 'Content-Type': 'application/json' }},
-            credentials: 'include',
             body: JSON.stringify({{ message, signature }}),
         }});
         if (!verifyResp.ok) throw new Error(`verify ${{verifyResp.status}}: ${{await verifyResp.text()}}`);
+        
         const session = await verifyResp.json();
+        
+        // Guardamos el token en localStorage
+        localStorage.setItem('auth_token', session.token);
 
         status.innerHTML =
             '<b>✅ Login correcto</b><br>' +
@@ -74,7 +76,9 @@ async function login() {{
 
 // ─── Deep links ──────────────────────────────────────────────
 function openInMetaMask() {{
-    window.location.href = 'https://link.metamask.io/dapp/' + encodeURIComponent(window.location.href);
+    // Formato correcto para evitar pantalla en blanco en Android
+    const currentUrl = window.location.host + window.location.pathname;
+    window.location.href = 'https://metamask.app.link/dapp/' + currentUrl;
 }}
 
 function openInTrust() {{
@@ -89,13 +93,26 @@ function openInCoinbase() {{
 async function whoami() {{
     const status = document.getElementById('status');
     try {{
-        const r = await fetch(`${{AUTH_URL}}/auth/me`, {{ credentials: 'include' }});
+        const token = localStorage.getItem('auth_token');
+        const headers = token ? {{ 'Authorization': `Bearer ${{token}}` }} : {{}};
+        
+        const r = await fetch(`${{AUTH_URL}}/auth/me`, {{ 
+            credentials: 'include',
+            headers: headers 
+        }});
+        
         if (r.status === 401) {{
             status.textContent = 'No hay sesión activa.';
+            localStorage.removeItem('auth_token'); // Limpiamos token inválido
             return;
         }}
+        if (!r.ok) throw new Error(`me ${{r.status}}: ${{await r.text()}}`);
+        
         const s = await r.json();
-        status.innerHTML = '<b>Sesión activa:</b><br>Address: <code>' + s.address + '</code>';
+        status.innerHTML =
+            '<b>Sesión activa:</b><br>' +
+            'Address: <code>' + s.address + '</code><br>' +
+            'Expira: ' + new Date(s.expires_at * 1000).toLocaleString();
     }} catch (err) {{
         status.textContent = 'Error: ' + (err.message || err);
     }}
@@ -104,14 +121,23 @@ async function whoami() {{
 async function logout() {{
     const status = document.getElementById('status');
     try {{
-        await fetch(`${{AUTH_URL}}/auth/logout`, {{ method: 'POST', credentials: 'include' }});
+        const token = localStorage.getItem('auth_token');
+        const headers = token ? {{ 'Authorization': `Bearer ${{token}}` }} : {{}};
+
+        await fetch(`${{AUTH_URL}}/auth/logout`, {{
+            method: 'POST', 
+            credentials: 'include',
+            headers: headers
+        }});
+        
+        localStorage.removeItem('auth_token');
         status.textContent = 'Sesión cerrada.';
     }} catch (err) {{
         status.textContent = 'Error: ' + (err.message || err);
     }}
 }}
 
-// ─── Mostrar botones (sin DOMContentLoaded) ──────────────────
+// ─── Mostrar botones ─────────────────────────────────────────
 if (hasInjectedWallet) {{
     document.getElementById('wallet-actions').style.display = 'block';
     document.getElementById('deep-links').style.display = 'none';
@@ -131,7 +157,6 @@ def get():
         "Demo DApp — SIWE",
         P("Autenticación con Sign-In with Ethereum (EIP-4361)."),
 
-        # Botones de Login (ocultos por defecto, se muestran si hay wallet)
         Div(
             Button("Login con wallet", onclick="login()"),
             Button("¿Quién soy?", onclick="whoami()", style="margin-left:8px;"),
@@ -140,7 +165,6 @@ def get():
             style="display:none; margin-top:16px;",
         ),
 
-        # Botones de Deep Link (visibles por defecto, se ocultan si hay wallet)
         Div(
             P("Abre esta DApp en el navegador de tu wallet:"),
             Button("Abrir en MetaMask", onclick="openInMetaMask()"),
